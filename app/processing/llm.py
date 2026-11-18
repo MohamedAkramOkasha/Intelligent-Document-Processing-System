@@ -26,6 +26,12 @@ class Attachment:
 _GEMINI_MIME = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
 
 
+def _retry_delay_s(exc: Exception) -> float | None:
+    """Server-suggested retry delay of a 429 (e.g. ``retryDelay: '57711s'``), if any."""
+    match = re.search(r"retryDelay'?\"?:\s*'?\"?(\d+(?:\.\d+)?)s", str(exc))
+    return float(match.group(1)) if match else None
+
+
 def _strip_fences(text: str) -> str:
     text = text.strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
@@ -36,7 +42,7 @@ class GeminiClient:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.8-flash",
         temperature: float = 0.0,
         max_retries: int = 3,
         timeout_s: int = 120,
@@ -51,6 +57,10 @@ class GeminiClient:
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
+        # Circuit breaker: after a long quota block (e.g. daily limit) fail fast until it lifts,
+        # so documents fall back to rules immediately instead of each one waiting on retries.
+        self._blocked_until = 0.0
+        self._blocked_reason = ""
 
     @staticmethod
     def prepare_attachment(data: bytes, mime_type: str) -> Attachment | None:
@@ -70,6 +80,8 @@ class GeminiClient:
         return None
 
     def generate_json(self, prompt: str, attachments: list[Attachment] | None = None) -> dict[str, Any]:
+        if time.time() < self._blocked_until:
+            raise LLMError(f"Gemini temporarily unavailable: {self._blocked_reason}")
         types = self._types
         contents: list[Any] = [
             types.Part.from_bytes(data=a.data, mime_type=a.mime_type) for a in attachments or []
@@ -91,9 +103,18 @@ class GeminiClient:
                 return parsed
             except Exception as exc:  # noqa: BLE001 - network, quota, JSON errors
                 last_exc = exc
+                code = getattr(exc, "code", None)
+                if isinstance(code, int) and 400 <= code < 500 and code not in (408, 429):
+                    break  # permanent error (bad key, unknown model, ...) - retrying won't help
+                delay_hint = _retry_delay_s(exc) if code == 429 else None
+                if delay_hint and delay_hint > 60:
+                    self._blocked_until = time.time() + delay_hint
+                    self._blocked_reason = f"quota exhausted, retry in {delay_hint / 3600:.1f}h"
+                    logger.error("Gemini quota exhausted; using fallback for %.0fs", delay_hint)
+                    break
                 if attempt < self.max_retries:
                     delay = min(2 ** attempt + random.random(), 30)
                     logger.warning("Gemini call failed (attempt %s/%s): %s - retrying in %.1fs",
                                    attempt, self.max_retries, exc, delay)
                     time.sleep(delay)
-        raise LLMError(f"Gemini request failed after {self.max_retries} attempts: {last_exc}")
+        raise LLMError(f"Gemini request failed: {last_exc}")

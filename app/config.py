@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(
         default=None, validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY")
     )
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     llm_enabled: bool = True
     llm_temperature: float = 0.0
     llm_max_retries: int = 3

@@ -161,7 +161,7 @@ Settings come from environment variables or `.env`. See [`.env.example`](.env.ex
 | Variable | Default | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | – | Google AI Studio key. If empty, the rule-based extractor is used |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model that supports JSON output |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model that supports JSON output |
 | `LLM_SEND_FILES` | `true` | Attach the original PDF/image to the prompt (multimodal) |
 | `LLM_MAX_RETRIES` | `3` | Retries with exponential backoff for transient errors |
 | `OCR_ENABLED` / `OCR_LANGUAGES` | `true` / `eng` | Tesseract settings (`eng+ara+fra` for multilingual) |
@@ -255,7 +255,7 @@ curl -o invoices.xlsx "http://localhost:8000/api/v1/export?format=xlsx&document_
       "required": true, "needs_review": false, "issues": [] }
   ],
   "validation_issues": [],
-  "extractor": "gemini:gemini-2.5-flash"
+  "extractor": "gemini:gemini-3.8-flash"
 }
 ```
 </details>
@@ -343,7 +343,7 @@ Exports include only `approved` and `auto_approved` documents unless you pass `s
 ## Testing
 
 ```bash
-pytest                    # 36 tests: parsing, coercion, validation, scoring, LLM paths, API, export
+pytest                    # 40 tests: parsing, coercion, validation, scoring, LLM paths, API, export
 pytest --cov=app          # with coverage
 ruff check app ui tests scripts
 ```
