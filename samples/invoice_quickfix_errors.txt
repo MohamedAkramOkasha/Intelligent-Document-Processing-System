@@ -1,0 +1,13 @@
+Quickfix Plumbing Services
+Invoice # QF-2207
+Date: 2026-09-14
+Due Date: 2026-09-01
+
+Bill To: Harper Residence
+
+Pipe replacement        1   $380.00   $380.00
+Labour (hours)          3    $65.00   $195.00
+
+Subtotal: $575.00
+Tax: $46.00
+Total: $650.00

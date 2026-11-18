@@ -1,0 +1,23 @@
+# --- API ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+# --- Core ---
+pydantic>=2.7,<3
+pydantic-settings>=2.3
+sqlalchemy>=2.0,<3
+python-dateutil>=2.9
+rapidfuzz>=3.9
+# --- LLM ---
+google-genai>=1.0
+# --- Parsing / OCR ---
+pypdfium2>=4.30
+pytesseract>=0.3.10
+pillow>=10.3
+python-docx>=1.1
+# --- Export ---
+pandas>=2.2
+openpyxl>=3.1
+# --- UI ---
+streamlit>=1.50
+requests>=2.32

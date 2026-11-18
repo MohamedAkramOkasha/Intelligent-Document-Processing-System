@@ -1,0 +1,21 @@
+Sunrise Office Supplies
+77 Elm Avenue, Austin, TX 78701
+accounts@sunrise-supplies.example
+
+INVOICE
+Invoice No: SOS-10593
+Invoice Date: March 3, 2026
+Due Date: April 2, 2026
+
+Bill To: Lakeside Dental Clinic
+
+Description            Qty   Unit Price   Amount
+A4 Copy Paper (box)     10       $32.00   $320.00
+Ink Cartridge Black      4       $45.00   $180.00
+Ergonomic Chair          2      $210.00   $420.00
+
+Subtotal: $920.00
+Sales Tax (8.25%): $75.90
+Total Due: $995.90
+
+Payment terms: Net 30
