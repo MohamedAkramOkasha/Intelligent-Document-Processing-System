@@ -38,7 +38,7 @@ def _resume_pending() -> None:
 async def lifespan(_: FastAPI):
     init_db()
     logger.info("LLM extractor: %s | data dir: %s",
-                settings.gemini_model if settings.llm_available else "disabled (heuristic mode)",
+                f"{settings.llm_provider}:{settings.active_model}" if settings.llm_available else "disabled (heuristic mode)",
                 settings.data_dir.resolve())
     _resume_pending()
     yield

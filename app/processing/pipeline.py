@@ -1,6 +1,6 @@
 """End-to-end processing pipeline.
 
-    file bytes -> parse (text layer / OCR) -> classify -> extract (Gemini or heuristic)
+    file bytes -> parse (text layer / OCR) -> classify -> extract (LLM or heuristic)
                -> schema coercion (Pydantic) -> business-rule validation
                -> confidence scoring -> review routing
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 from app.config import Settings, get_settings
 from app.processing import confidence as conf
-from app.processing.extractors import Extractor, GeminiExtractor, HeuristicExtractor
+from app.processing.extractors import Extractor, HeuristicExtractor, LLMExtractor
 from app.processing.parsers import ParsedDocument, parse_document
 from app.processing.validation import coerce, validate
 from app.schemas.documents import DocumentType
@@ -36,9 +36,9 @@ class DocumentPipeline:
         if extractor is not None:
             self.extractor: Extractor = extractor
         elif self.settings.llm_available:
-            self.extractor = GeminiExtractor(self.settings)
+            self.extractor = LLMExtractor(self.settings)
         else:
-            logger.warning("No GEMINI_API_KEY configured - using the heuristic extractor.")
+            logger.warning("No LLM configured (%s) - using the heuristic extractor.", self.settings.llm_provider)
             self.extractor = self.fallback
 
     # ------------------------------------------------------------------ public API
@@ -53,7 +53,7 @@ class DocumentPipeline:
         parsed = parse_document(data, filename, content_type)
         warnings = list(parsed.warnings)
         extractor = self.extractor
-        if not parsed.text.strip() and not isinstance(extractor, GeminiExtractor):
+        if not parsed.text.strip() and not getattr(extractor, "sees_files", False):
             warnings.append("Nothing to extract: no text and no vision model available.")
 
         # 1. classification

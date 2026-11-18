@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_MODELS = {"groq": "openai/gpt-oss-120b", "openai": "gpt-4o-mini"}
+_DEFAULT_BASE_URLS = {"groq": "https://api.groq.com/openai/v1", "openai": "https://api.openai.com/v1"}
 
 
 class Settings(BaseSettings):
@@ -23,11 +27,20 @@ class Settings(BaseSettings):
     database_url: str | None = None
     max_upload_mb: int = 25
 
-    # --- LLM (Gemini) ------------------------------------------------------------
+    # --- LLM ---------------------------------------------------------------------
+    # "gemini" uses the Google Gen AI SDK; "groq" / "openai" use any OpenAI-compatible
+    # Chat Completions endpoint (Groq, OpenRouter, Ollama, LM Studio, vLLM, OpenAI, ...).
+    llm_provider: Literal["gemini", "groq", "openai"] = "gemini"
     gemini_api_key: str | None = Field(
         default=None, validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY")
     )
     gemini_model: str = "gemini-3.8-flash"
+    llm_api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("LLM_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY")
+    )
+    llm_model: str | None = None  # default depends on the provider
+    llm_base_url: str | None = None  # default depends on the provider
+    llm_vision: bool = False  # OpenAI-compatible only: the model accepts images
     llm_enabled: bool = True
     llm_temperature: float = 0.0
     llm_max_retries: int = 3
@@ -56,14 +69,33 @@ class Settings(BaseSettings):
     api_key: str | None = None  # if set, clients must send `X-API-Key`
     cors_origins: list[str] = ["*"]
 
-    @field_validator("gemini_api_key", "api_key", "tesseract_cmd", "database_url", mode="before")
+    @field_validator("gemini_api_key", "llm_api_key", "llm_model", "llm_base_url", "api_key",
+                     "tesseract_cmd", "database_url", mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         return v or None
 
     @property
+    def active_model(self) -> str:
+        if self.llm_provider == "gemini":
+            return self.gemini_model
+        return self.llm_model or _DEFAULT_MODELS[self.llm_provider]
+
+    @property
+    def active_base_url(self) -> str:
+        return (self.llm_base_url or _DEFAULT_BASE_URLS.get(self.llm_provider, "")).rstrip("/")
+
+    @property
+    def active_api_key(self) -> str | None:
+        return self.gemini_api_key if self.llm_provider == "gemini" else self.llm_api_key
+
+    @property
     def llm_available(self) -> bool:
-        return bool(self.llm_enabled and self.gemini_api_key)
+        if not self.llm_enabled:
+            return False
+        if self.llm_provider == "openai" and self.llm_base_url:
+            return True  # local servers (Ollama, LM Studio) need no key
+        return bool(self.active_api_key)
 
     @property
     def upload_dir(self) -> Path:

@@ -11,6 +11,10 @@ os.environ.update({
     "DATA_DIR": _TMP,
     "GEMINI_API_KEY": "",
     "GOOGLE_API_KEY": "",
+    "LLM_PROVIDER": "gemini",
+    "LLM_API_KEY": "",
+    "GROQ_API_KEY": "",
+    "OPENAI_API_KEY": "",
     "API_KEY": "",
     "DATABASE_URL": "",
 })

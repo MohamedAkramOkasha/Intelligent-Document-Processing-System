@@ -160,8 +160,13 @@ Settings come from environment variables or `.env`. See [`.env.example`](.env.ex
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | – | Google AI Studio key. If empty, the rule-based extractor is used |
+| `LLM_PROVIDER` | `gemini` | `gemini`, `groq` (free tier) or `openai` (any OpenAI-compatible API: OpenRouter, Ollama, LM Studio, ...) |
+| `GEMINI_API_KEY` | – | Google AI Studio key (provider `gemini`). If no LLM is configured, the rule-based extractor is used |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model that supports JSON output |
+| `LLM_API_KEY` | – | Key for `groq` / `openai` (also read from `GROQ_API_KEY` / `OPENAI_API_KEY`) |
+| `LLM_MODEL` | `openai/gpt-oss-120b` (groq) | Chat model that supports JSON mode |
+| `LLM_BASE_URL` | provider default | Endpoint for `openai`, e.g. `https://openrouter.ai/api/v1` or `http://host.docker.internal:11434/v1` |
+| `LLM_VISION` | `false` | Send images to an OpenAI-compatible model (only if it supports vision) |
 | `LLM_SEND_FILES` | `true` | Attach the original PDF/image to the prompt (multimodal) |
 | `LLM_MAX_RETRIES` | `3` | Retries with exponential backoff for transient errors |
 | `OCR_ENABLED` / `OCR_LANGUAGES` | `true` / `eng` | Tesseract settings (`eng+ara+fra` for multilingual) |

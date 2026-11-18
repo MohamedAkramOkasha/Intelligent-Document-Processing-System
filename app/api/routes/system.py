@@ -19,7 +19,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "version": s.app_version,
-        "llm": {"enabled": s.llm_available, "model": s.gemini_model if s.llm_available else None},
+        "llm": {"enabled": s.llm_available, "provider": s.llm_provider, "model": s.active_model if s.llm_available else None},
         "ocr": {"enabled": ocr_available()},
     }
 
@@ -45,5 +45,5 @@ def stats(db: Session = Depends(get_db)) -> StatsOut:
         total_batches=db.scalar(select(func.count(Batch.id))) or 0,
         llm_enabled=s.llm_available,
         ocr_enabled=ocr_available(),
-        model=s.gemini_model if s.llm_available else None,
+        model=s.active_model if s.llm_available else None,
     )

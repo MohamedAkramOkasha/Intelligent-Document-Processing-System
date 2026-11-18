@@ -1,4 +1,4 @@
-"""Extractor implementations: Gemini (LLM, multimodal) and heuristic (rule-based)."""
+"""Extractor implementations: LLM (Gemini or OpenAI-compatible) and heuristic (rule-based)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.processing import heuristics
-from app.processing.llm import Attachment, GeminiClient
+from app.processing.llm import Attachment, BaseLLMClient, make_client
 from app.processing.parsers import ParsedDocument
 from app.processing.prompts import CLASSIFY_PROMPT, REPAIR_PROMPT, build_extract_prompt
 from app.schemas.documents import DocumentType, model_for
@@ -37,22 +37,20 @@ class HeuristicExtractor:
         return heuristics.extract(doc.text, doc_type)
 
 
-class GeminiExtractor:
-    def __init__(self, settings: Settings, client: GeminiClient | None = None):
+class LLMExtractor:
+    def __init__(self, settings: Settings, client: BaseLLMClient | None = None):
         self.settings = settings
-        self.client = client or GeminiClient(
-            api_key=settings.gemini_api_key or "",
-            model=settings.gemini_model,
-            temperature=settings.llm_temperature,
-            max_retries=settings.llm_max_retries,
-            timeout_s=settings.llm_timeout_s,
+        self.client = client or make_client(settings)
+        self.name = f"{settings.llm_provider}:{settings.active_model}"
+        # Whether the model gets to see the original file (PDF/image), not just the text.
+        self.sees_files = settings.llm_send_files and (
+            settings.llm_provider == "gemini" or settings.llm_vision
         )
-        self.name = f"gemini:{settings.gemini_model}"
 
     def _attachments(self, doc: ParsedDocument) -> list[Attachment]:
-        if not (self.settings.llm_send_files and doc.is_visual):
+        if not (self.sees_files and doc.is_visual):
             return []
-        att = GeminiClient.prepare_attachment(doc.raw_bytes, doc.mime_type)
+        att = BaseLLMClient.prepare_attachment(doc.raw_bytes, doc.mime_type)
         return [att] if att else []
 
     def _text(self, doc: ParsedDocument, limit: int) -> str:
@@ -79,7 +77,7 @@ class GeminiExtractor:
             model.model_validate(out.get("data") or {})
         except ValidationError as exc:
             # One self-repair round: show the model its validation errors.
-            logger.info("Extraction failed schema validation, asking Gemini to repair: %s", exc.error_count())
+            logger.info("Extraction failed schema validation, asking the LLM to repair: %s", exc.error_count())
             errors = "\n".join(f"- {'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
             repair = REPAIR_PROMPT.format(errors=errors, previous=json.dumps(out)[:20000])
             try:
@@ -91,6 +89,9 @@ class GeminiExtractor:
             field_confidence=_floats(out.get("field_confidence")),
             evidence={k: str(v) for k, v in (out.get("evidence") or {}).items() if v},
         )
+
+
+GeminiExtractor = LLMExtractor  # backwards-compatible name
 
 
 def _floats(value) -> dict[str, float]:
