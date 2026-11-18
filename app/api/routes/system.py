@@ -19,7 +19,12 @@ def health() -> dict:
     return {
         "status": "ok",
         "version": s.app_version,
-        "llm": {"enabled": s.llm_available, "provider": s.llm_provider, "model": s.active_model if s.llm_available else None},
+        "llm": {
+            "enabled": s.llm_available,
+            "provider": s.llm_providers[0] if s.llm_available else None,
+            "model": s.model_for(s.llm_providers[0]) if s.llm_available else None,
+            "chain": s.llm_label or None,  # e.g. "groq:openai/gpt-oss-120b -> gemini:gemini-3.8-flash"
+        },
         "ocr": {"enabled": ocr_available()},
     }
 
@@ -45,5 +50,5 @@ def stats(db: Session = Depends(get_db)) -> StatsOut:
         total_batches=db.scalar(select(func.count(Batch.id))) or 0,
         llm_enabled=s.llm_available,
         ocr_enabled=ocr_available(),
-        model=s.active_model if s.llm_available else None,
+        model=s.llm_label if s.llm_available else None,
     )

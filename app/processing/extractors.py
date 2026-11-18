@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.processing import heuristics
-from app.processing.llm import Attachment, BaseLLMClient, make_client
+from app.processing.llm import Attachment, BaseLLMClient, FallbackClient, make_client
 from app.processing.parsers import ParsedDocument
 from app.processing.prompts import CLASSIFY_PROMPT, REPAIR_PROMPT, build_extract_prompt
 from app.schemas.documents import DocumentType, model_for
@@ -38,14 +38,20 @@ class HeuristicExtractor:
 
 
 class LLMExtractor:
-    def __init__(self, settings: Settings, client: BaseLLMClient | None = None):
+    def __init__(self, settings: Settings, client: BaseLLMClient | FallbackClient | None = None):
         self.settings = settings
         self.client = client or make_client(settings)
-        self.name = f"{settings.llm_provider}:{settings.active_model}"
-        # Whether the model gets to see the original file (PDF/image), not just the text.
-        self.sees_files = settings.llm_send_files and (
-            settings.llm_provider == "gemini" or settings.llm_vision
-        )
+        self.name = (getattr(self.client, "label", None) or settings.llm_label
+                     or f"{settings.llm_provider}:{settings.active_model}")
+        # Whether a model gets to see the original file (PDF/image), not just the text.
+        # Each client drops attachments it can't use, so a text-only primary with a
+        # multimodal fallback still gets the file when the fallback answers.
+        self.sees_files = settings.llm_send_files and getattr(self.client, "sees_files", True)
+
+    @property
+    def last_name(self) -> str:
+        """The model that produced this thread's latest answer (differs after a fallback)."""
+        return getattr(self.client, "last_label", None) or self.name
 
     def _attachments(self, doc: ParsedDocument) -> list[Attachment]:
         if not (self.sees_files and doc.is_visual):

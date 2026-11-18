@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     llm_model: str | None = None  # default depends on the provider
     llm_base_url: str | None = None  # default depends on the provider
     llm_vision: bool = False  # OpenAI-compatible only: the model accepts images
+    # Second provider tried when the first fails / is rate-limited (e.g. groq -> gemini).
+    # Gemini uses the GEMINI_* settings, groq/openai the LLM_* settings, so the two
+    # providers must be one Gemini and one OpenAI-compatible.
+    llm_fallback_provider: Literal["gemini", "groq", "openai"] | None = None
+    # Max simultaneous requests per provider (0 = unlimited). Default: 1 for groq, else 0.
+    llm_concurrency: int | None = None
+    # Longest a request waits out short rate limits (429 + retry-after) before giving up
+    # and moving on to the fallback provider / rule-based extraction.
+    llm_rate_limit_max_wait_s: float = 90.0
     llm_enabled: bool = True
     llm_temperature: float = 0.0
     llm_max_retries: int = 3
@@ -70,32 +79,65 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["*"]
 
     @field_validator("gemini_api_key", "llm_api_key", "llm_model", "llm_base_url", "api_key",
-                     "tesseract_cmd", "database_url", mode="before")
+                     "tesseract_cmd", "database_url", "llm_fallback_provider", mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         return v or None
 
+    # --- per-provider resolution -------------------------------------------------
+    def model_for(self, provider: str) -> str:
+        if provider == "gemini":
+            return self.gemini_model
+        return self.llm_model or _DEFAULT_MODELS[provider]
+
+    def base_url_for(self, provider: str) -> str:
+        return (self.llm_base_url or _DEFAULT_BASE_URLS.get(provider, "")).rstrip("/")
+
+    def concurrency_for(self, provider: str) -> int:
+        if self.llm_concurrency is not None:
+            return max(self.llm_concurrency, 0)
+        return 1 if provider == "groq" else 0
+
+    def provider_configured(self, provider: str) -> bool:
+        if provider == "gemini":
+            return bool(self.gemini_api_key)
+        if provider == "openai" and self.llm_base_url:
+            return True  # local servers (Ollama, LM Studio) need no key
+        return bool(self.llm_api_key)
+
+    @property
+    def llm_providers(self) -> list[str]:
+        """Configured providers in the order they are tried."""
+        if not self.llm_enabled:
+            return []
+        chain = [self.llm_provider]
+        fb = self.llm_fallback_provider
+        # Both openai-compatible providers would share the LLM_* settings - not supported.
+        if fb and fb != self.llm_provider and "gemini" in (fb, self.llm_provider):
+            chain.append(fb)
+        return [p for p in chain if self.provider_configured(p)]
+
+    # --- primary provider (kept for status endpoints / logs) ---------------------
     @property
     def active_model(self) -> str:
-        if self.llm_provider == "gemini":
-            return self.gemini_model
-        return self.llm_model or _DEFAULT_MODELS[self.llm_provider]
+        return self.model_for(self.llm_provider)
 
     @property
     def active_base_url(self) -> str:
-        return (self.llm_base_url or _DEFAULT_BASE_URLS.get(self.llm_provider, "")).rstrip("/")
+        return self.base_url_for(self.llm_provider)
 
     @property
     def active_api_key(self) -> str | None:
         return self.gemini_api_key if self.llm_provider == "gemini" else self.llm_api_key
 
     @property
+    def llm_label(self) -> str:
+        """e.g. ``groq:openai/gpt-oss-120b -> gemini:gemini-3.8-flash``."""
+        return " -> ".join(f"{p}:{self.model_for(p)}" for p in self.llm_providers)
+
+    @property
     def llm_available(self) -> bool:
-        if not self.llm_enabled:
-            return False
-        if self.llm_provider == "openai" and self.llm_base_url:
-            return True  # local servers (Ollama, LM Studio) need no key
-        return bool(self.active_api_key)
+        return bool(self.llm_providers)
 
     @property
     def upload_dir(self) -> Path:

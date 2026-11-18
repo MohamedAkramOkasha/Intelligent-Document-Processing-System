@@ -167,6 +167,9 @@ Settings come from environment variables or `.env`. See [`.env.example`](.env.ex
 | `LLM_MODEL` | `openai/gpt-oss-120b` (groq) | Chat model that supports JSON mode |
 | `LLM_BASE_URL` | provider default | Endpoint for `openai`, e.g. `https://openrouter.ai/api/v1` or `http://host.docker.internal:11434/v1` |
 | `LLM_VISION` | `false` | Send images to an OpenAI-compatible model (only if it supports vision) |
+| `LLM_FALLBACK_PROVIDER` | – | Provider tried when the first is rate limited, over quota or failing, e.g. `groq` → `gemini`. One must be `gemini`, the other `groq`/`openai` |
+| `LLM_CONCURRENCY` | `1` for groq, else unlimited | Max simultaneous requests per provider; extra workers queue instead of hitting the rate limit |
+| `LLM_RATE_LIMIT_MAX_WAIT_S` | `90` | A per-minute rate limit pauses all requests to that provider until it resets (not counted as a retry); after waiting this long in total a request moves to the fallback |
 | `LLM_SEND_FILES` | `true` | Attach the original PDF/image to the prompt (multimodal) |
 | `LLM_MAX_RETRIES` | `3` | Retries with exponential backoff for transient errors |
 | `OCR_ENABLED` / `OCR_LANGUAGES` | `true` / `eng` | Tesseract settings (`eng+ara+fra` for multilingual) |
@@ -174,7 +177,7 @@ Settings come from environment variables or `.env`. See [`.env.example`](.env.ex
 | `CONFIDENCE_THRESHOLD` | `0.80` | Minimum document score for auto-approval |
 | `FIELD_CONFIDENCE_THRESHOLD` | `0.60` | A required field below this sends the document to review |
 | `CLASSIFICATION_THRESHOLD` | `0.60` | Minimum document-type confidence |
-| `BATCH_CONCURRENCY` | `4` | Parallel workers (keep within your Gemini rate limit) |
+| `BATCH_CONCURRENCY` | `4` | Parallel workers for parsing/OCR; LLM calls are additionally capped by `LLM_CONCURRENCY` |
 | `DATABASE_URL` | SQLite in `DATA_DIR` | Any SQLAlchemy URL, e.g. PostgreSQL |
 | `API_KEY` | – | If set, `/api/v1/*` requires the `X-API-Key` header |
 

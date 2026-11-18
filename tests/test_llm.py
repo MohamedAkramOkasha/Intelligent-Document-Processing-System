@@ -119,7 +119,7 @@ def test_openai_client_short_retry_after_is_honoured(monkeypatch):
     monkeypatch.setattr("app.processing.llm.time.sleep", sleeps.append)
     client, calls = _http_client([(429, "tpm", {"retry-after": "7"}), (200, '{"ok": 1}', {})])
     assert client.generate_json("p") == {"ok": 1}
-    assert sleeps == [7.0]
+    assert len(sleeps) == 1 and 6.5 < sleeps[0] < 8.1  # retry-after + jitter
 
 
 def test_groq_settings_and_factory():
@@ -137,3 +137,120 @@ def test_openai_client_request_too_large_not_retried():
     with pytest.raises(LLMError):
         client.generate_json("p")
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------- rate limits & fallback
+from app.processing.llm import FallbackClient, _retry_delay_s  # noqa: E402
+
+
+def test_retry_delay_parsing():
+    assert _retry_delay_s(Exception("Please try again in 6.72s.")) == 6.72
+    assert _retry_delay_s(Exception("try again in 1h2m3s")) == 3723
+    assert _retry_delay_s(Exception("try again in 2m30.5s")) == 150.5
+    assert _retry_delay_s(Exception("try again in 450ms")) == 0.45
+    assert _retry_delay_s(Exception("no hint")) is None
+
+
+def test_rate_limits_do_not_consume_retries(monkeypatch):
+    monkeypatch.setattr("app.processing.llm.time.sleep", lambda _: None)
+    monkeypatch.setattr("app.processing.llm.time.time", lambda: 0.0)  # pauses expire instantly
+    tpm = (429, "Rate limit reached. Please try again in 2s", {})
+    client, calls = _http_client([tpm, tpm, tpm, tpm, (200, '{"ok": 1}', {})])  # max_retries=3
+    assert client.generate_json("p") == {"ok": 1}
+    assert len(calls) == 5
+
+
+def test_rate_limit_wait_budget_then_give_up(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("app.processing.llm.time.time", lambda: clock[0])
+    monkeypatch.setattr("app.processing.llm.time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    tpm = (429, "Please try again in 30s", {})
+    client, calls = _http_client([tpm] * 10)
+    client.rate_limit_max_wait_s = 60
+    with pytest.raises(LLMError, match="rate limited"):
+        client.generate_json("p")
+    assert len(calls) == 2  # waited ~30s once; a second ~30s wait would exceed the budget
+
+
+def test_rate_limit_pause_is_shared(monkeypatch):
+    """A 429 seen by one request delays the next request on the same client."""
+    clock = [0.0]
+    sleeps: list = []
+    monkeypatch.setattr("app.processing.llm.time.time", lambda: clock[0])
+
+    def sleep(s):
+        sleeps.append(s)
+        clock[0] += s
+
+    monkeypatch.setattr("app.processing.llm.time.sleep", sleep)
+    client, _ = _http_client([(429, "Please try again in 5s", {}), (200, "{}", {}), (200, "{}", {})])
+    client._pause(5)  # as if another worker just hit the limit
+    client.generate_json("p")
+    assert sleeps and sleeps[0] == 5
+
+
+def test_concurrency_limit():
+    import threading as th
+
+    client = OpenAICompatibleClient(base_url="https://x/v1", model="m", max_concurrent=1)
+    active, peak, lock = [0], [0], th.Lock()
+
+    def request(prompt, attachments):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        import time as t
+        t.sleep(0.02)
+        with lock:
+            active[0] -= 1
+        return "{}"
+
+    client._request = request
+    threads = [th.Thread(target=client.generate_json, args=("p",)) for _ in range(4)]
+    for t_ in threads:
+        t_.start()
+    for t_ in threads:
+        t_.join()
+    assert peak[0] == 1
+
+
+class _Stub:
+    def __init__(self, label, result, sees_files=False):
+        self.label, self.result, self.sees_files, self.calls = label, result, sees_files, 0
+
+    def generate_json(self, prompt, attachments=None):
+        self.calls += 1
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def test_fallback_client_uses_next_provider():
+    groq = _Stub("groq:m", LLMError("Groq rate limited"))
+    gemini = _Stub("gemini:g", {"ok": 1}, sees_files=True)
+    fb = FallbackClient([groq, gemini])
+    assert fb.generate_json("p") == {"ok": 1}
+    assert fb.last_label == "gemini:g"
+    assert fb.label == "groq:m -> gemini:g" and fb.sees_files
+
+
+def test_fallback_client_all_fail():
+    fb = FallbackClient([_Stub("a", LLMError("A down")), _Stub("b", LLMError("B down"))])
+    with pytest.raises(LLMError, match="A down .* B down"):
+        fb.generate_json("p")
+
+
+def test_fallback_settings_chain():
+    s = Settings(_env_file=None, llm_provider="groq", LLM_API_KEY="k", GEMINI_API_KEY="g",
+                 llm_fallback_provider="gemini")
+    assert s.llm_providers == ["groq", "gemini"]
+    assert s.llm_label == "groq:openai/gpt-oss-120b -> gemini:gemini-3.8-flash"
+    client = make_client(s)
+    assert isinstance(client, FallbackClient)
+    assert client.clients[0]._slots is not None  # groq: 1 request at a time by default
+    assert client.clients[1]._slots is None
+    # fallback without its key is dropped; two OpenAI-compatible providers are not chained
+    assert Settings(_env_file=None, llm_provider="groq", LLM_API_KEY="k",
+                    llm_fallback_provider="gemini").llm_providers == ["groq"]
+    assert Settings(_env_file=None, llm_provider="groq", LLM_API_KEY="k",
+                    llm_fallback_provider="openai").llm_providers == ["groq"]

@@ -15,7 +15,7 @@ with st.sidebar:
         health = client().health()
         llm = health["llm"]
         st.success(f"API online · v{health['version']}")
-        st.caption(f"LLM: {'**' + llm['model'] + '**' if llm['enabled'] else 'disabled (rule-based mode)'}")
+        st.caption(f"LLM: {'**' + (llm.get('chain') or llm['model']) + '**' if llm['enabled'] else 'disabled (rule-based mode)'}")
         st.caption(f"OCR: {'Tesseract ✓' if health['ocr']['enabled'] else 'not available'}")
     except APIError as exc:
         st.error(f"API offline\n\n{exc.detail}")

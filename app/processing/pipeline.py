@@ -71,6 +71,7 @@ class DocumentPipeline:
         extractor_name = extractor.name
         try:
             raw = extractor.extract(parsed, doc_type)
+            extractor_name = getattr(extractor, "last_name", extractor_name)
         except Exception as exc:  # noqa: BLE001
             if extractor is self.fallback:
                 raise

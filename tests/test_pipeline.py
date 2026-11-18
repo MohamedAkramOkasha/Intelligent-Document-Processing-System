@@ -68,3 +68,19 @@ def test_falls_back_to_heuristics_when_llm_fails(invoice_text):
     assert r.data["invoice_number"] == "SOS-10593"
     assert any("fallback" in w or "keyword" in w for w in r.warnings)
     assert r.needs_review
+
+
+def test_pipeline_records_fallback_model(invoice_text, gemini_invoice_response):
+    from app.processing.llm import FallbackClient
+
+    class Stub(FakeGemini):
+        def __init__(self, label, responses):
+            super().__init__(responses)
+            self.label, self.sees_files = label, False
+
+    groq = Stub("groq:m", [LLMError("rate limited")] * 2)
+    gemini = Stub("gemini:g", [{"document_type": "invoice", "confidence": 0.97}, gemini_invoice_response])
+    extractor = GeminiExtractor(get_settings(), client=FallbackClient([groq, gemini]))
+    r = DocumentPipeline(extractor=extractor).process(invoice_text.encode(), "inv.txt").result
+    assert r.extractor == "gemini:g"
+    assert r.data["total_amount"] == 550.0
