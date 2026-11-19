@@ -59,6 +59,13 @@ class LLMExtractor:
         att = BaseLLMClient.prepare_attachment(doc.raw_bytes, doc.mime_type)
         return [att] if att else []
 
+    def _generate(self, prompt: str, attachments: list[Attachment], doc: ParsedDocument) -> dict:
+        # No text (e.g. a scan without OCR): only a model that sees the file can help, so a
+        # text-only primary must not answer (it would "succeed" with an empty extraction).
+        if attachments and not doc.text.strip() and isinstance(self.client, FallbackClient):
+            return self.client.generate_json(prompt, attachments, files_only=True)
+        return self.client.generate_json(prompt, attachments)
+
     def _text(self, doc: ParsedDocument, limit: int) -> str:
         text = doc.text
         return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
@@ -67,7 +74,7 @@ class LLMExtractor:
         prompt = CLASSIFY_PROMPT.format(text=self._text(doc, 6000))
         # Only attach the file when there is too little text to decide on.
         attachments = self._attachments(doc) if len(doc.text.strip()) < 200 else []
-        out = self.client.generate_json(prompt, attachments)
+        out = self._generate(prompt, attachments, doc)
         try:
             doc_type = DocumentType(str(out.get("document_type", "generic")).lower())
         except ValueError:
@@ -77,7 +84,7 @@ class LLMExtractor:
     def extract(self, doc: ParsedDocument, doc_type: DocumentType) -> RawExtraction:
         prompt = build_extract_prompt(doc_type, self._text(doc, self.settings.llm_max_text_chars))
         attachments = self._attachments(doc)
-        out = self.client.generate_json(prompt, attachments)
+        out = self._generate(prompt, attachments, doc)
         model = model_for(doc_type)
         try:
             model.model_validate(out.get("data") or {})
@@ -87,7 +94,7 @@ class LLMExtractor:
             errors = "\n".join(f"- {'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
             repair = REPAIR_PROMPT.format(errors=errors, previous=json.dumps(out)[:20000])
             try:
-                out = self.client.generate_json(prompt + "\n\n" + repair, attachments)
+                out = self._generate(prompt + "\n\n" + repair, attachments, doc)
             except Exception:  # noqa: BLE001 - keep the first answer; coercion handles the rest
                 logger.warning("Repair round failed; continuing with original output")
         return RawExtraction(

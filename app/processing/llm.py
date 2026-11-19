@@ -58,6 +58,14 @@ def _retry_delay_s(exc: Exception) -> float | None:
     return total or None
 
 
+_UNAVAILABLE_COOLDOWN_S = 60
+
+
+def _is_timeout(exc: Exception) -> bool:
+    """requests / httpx / google-genai timeouts all carry "Timeout" in the class name or message."""
+    return any("timeout" in t.__name__.lower() for t in type(exc).__mro__) or "timed out" in str(exc).lower()
+
+
 def _strip_fences(text: str) -> str:
     text = text.strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
@@ -152,6 +160,15 @@ class BaseLLMClient:
                 code = getattr(exc, "code", None)
                 if isinstance(code, int) and 400 <= code < 500 and code not in (408, 429):
                     break  # permanent error (bad key, unknown model, ...) - retrying won't help
+                if code == 503 or _is_timeout(exc):
+                    # Overloaded or hanging: retrying (each try can take the full timeout) only
+                    # delays the fallback. Skip this provider briefly so queued calls fail fast too.
+                    with self._lock:
+                        self._blocked_until = max(self._blocked_until, time.time() + _UNAVAILABLE_COOLDOWN_S)
+                    self._blocked_reason = "overloaded or not responding"
+                    logger.warning("%s unavailable (%s); skipping it for %ds", name, str(exc)[:120],
+                                   _UNAVAILABLE_COOLDOWN_S)
+                    break
                 if code == 429:
                     if "request too large" in str(exc).lower():
                         break  # one request exceeds the per-minute limit - it can never succeed
@@ -302,16 +319,21 @@ class FallbackClient:
     def last_label(self) -> str:
         return getattr(self._local, "label", self.clients[0].label)
 
-    def generate_json(self, prompt: str, attachments: list[Attachment] | None = None) -> dict[str, Any]:
+    def generate_json(self, prompt: str, attachments: list[Attachment] | None = None,
+                      files_only: bool = False) -> dict[str, Any]:
+        """``files_only``: the content is only in the attachments (no text), so skip clients
+        that can't see files - a text-only model would answer, but with nothing to go on."""
+        clients = [c for c in self.clients if c.sees_files] if files_only else []
+        clients = clients or self.clients
         errors: list[str] = []
-        for i, client in enumerate(self.clients):
+        for i, client in enumerate(clients):
             try:
                 out = client.generate_json(prompt, attachments)
             except LLMError as exc:
                 errors.append(str(exc))
-                if i + 1 < len(self.clients):
+                if i + 1 < len(clients):
                     logger.warning("%s failed (%s) - falling back to %s",
-                                   client.label, str(exc)[:200], self.clients[i + 1].label)
+                                   client.label, str(exc)[:200], clients[i + 1].label)
                 continue
             self._local.label = client.label
             return out

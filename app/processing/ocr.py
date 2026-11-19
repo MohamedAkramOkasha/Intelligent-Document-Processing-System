@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_DEFAULT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 try:  # pytesseract is optional at import time so the app still runs without OCR
     import pytesseract
@@ -43,6 +47,9 @@ def ocr_available() -> bool:
         return False
     if settings.tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+    elif not shutil.which("tesseract") and Path(_WINDOWS_DEFAULT).is_file():
+        # The Windows installer doesn't add Tesseract to PATH.
+        pytesseract.pytesseract.tesseract_cmd = _WINDOWS_DEFAULT
     try:
         pytesseract.get_tesseract_version()
         return True

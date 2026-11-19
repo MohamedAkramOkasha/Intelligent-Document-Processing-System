@@ -84,3 +84,28 @@ def test_pipeline_records_fallback_model(invoice_text, gemini_invoice_response):
     r = DocumentPipeline(extractor=extractor).process(invoice_text.encode(), "inv.txt").result
     assert r.extractor == "gemini:g"
     assert r.data["total_amount"] == 550.0
+
+
+def test_textless_image_goes_to_vision_fallback(gemini_invoice_response):
+    """A scan with no OCR text must reach the model that sees the file, not a text-only primary."""
+    import io
+
+    from PIL import Image
+
+    from app.processing.llm import FallbackClient
+
+    class Stub(FakeGemini):
+        def __init__(self, label, responses, sees_files):
+            super().__init__(responses)
+            self.label, self.sees_files = label, sees_files
+
+    groq = Stub("groq:m", [{"document_type": "generic", "confidence": 0.4}, {"data": {}}], sees_files=False)
+    gemini = Stub("gemini:g", [{"document_type": "invoice", "confidence": 0.97}, gemini_invoice_response],
+                  sees_files=True)
+    buf = io.BytesIO()
+    Image.new("RGB", (200, 100), "white").save(buf, format="PNG")
+    extractor = GeminiExtractor(get_settings(), client=FallbackClient([groq, gemini]))
+    r = DocumentPipeline(extractor=extractor).process(buf.getvalue(), "scan.png").result
+    assert groq.calls == []
+    assert r.document_type == DocumentType.INVOICE and r.extractor == "gemini:g"
+    assert gemini.calls and gemini.calls[0][1]  # the image was attached

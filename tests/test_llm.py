@@ -50,9 +50,23 @@ def test_daily_quota_opens_circuit_breaker():
 
 def test_transient_error_is_retried(monkeypatch):
     monkeypatch.setattr("app.processing.llm.time.sleep", lambda _: None)
-    client, calls = _client([FakeAPIError(503, "unavailable"), '{"ok": true}'])
+    client, calls = _client([FakeAPIError(500, "internal error"), '{"ok": true}'])
     assert client.generate_json("p") == {"ok": True}
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error", [
+    FakeAPIError(503, "UNAVAILABLE: This model is currently experiencing high demand"),
+    TimeoutError("The read operation timed out"),
+])
+def test_overloaded_or_hanging_provider_fails_fast(error):
+    """No retries (each can take the full timeout), and the next call skips the provider."""
+    client, calls = _client([error, '{"ok": true}'])
+    with pytest.raises(LLMError):
+        client.generate_json("p")
+    with pytest.raises(LLMError, match="temporarily unavailable: overloaded"):
+        client.generate_json("p")
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------- OpenAI-compatible (Groq, ...)
@@ -254,3 +268,14 @@ def test_fallback_settings_chain():
                     llm_fallback_provider="gemini").llm_providers == ["groq"]
     assert Settings(_env_file=None, llm_provider="groq", LLM_API_KEY="k",
                     llm_fallback_provider="openai").llm_providers == ["groq"]
+
+
+def test_fallback_client_files_only_skips_text_only_providers():
+    groq = _Stub("groq:m", {"empty": True})
+    gemini = _Stub("gemini:g", {"ok": 1}, sees_files=True)
+    fb = FallbackClient([groq, gemini])
+    assert fb.generate_json("p", files_only=True) == {"ok": 1}
+    assert groq.calls == 0 and fb.last_label == "gemini:g"
+    # no provider sees files: try them all as usual rather than failing
+    fb = FallbackClient([_Stub("a", {"a": 1}), _Stub("b", {"b": 1})])
+    assert fb.generate_json("p", files_only=True) == {"a": 1}
