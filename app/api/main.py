@@ -50,8 +50,8 @@ app = FastAPI(
     version=settings.app_version,
     description=(
         "Extract structured, validated JSON from invoices, receipts, contracts and other business "
-        "documents using OCR + Gemini, with confidence scoring, human-in-the-loop review, batch "
-        "processing and CSV/Excel export."
+        "documents using OCR + an LLM (Gemini, Groq or any OpenAI-compatible API), with confidence "
+        "scoring, human-in-the-loop review, batch processing and CSV/Excel export."
     ),
     lifespan=lifespan,
 )

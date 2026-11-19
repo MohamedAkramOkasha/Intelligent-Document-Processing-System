@@ -2,7 +2,7 @@
 
 # 📄 Intelligent Document Processing System
 
-**Turn invoices, receipts, contracts and other business documents into validated, structured data. The pipeline combines OCR, Google Gemini, Pydantic validation, confidence scoring and human review.**
+**Turn invoices, receipts, contracts and other business documents into validated, structured data. The pipeline combines OCR, an LLM (Gemini, Groq or any OpenAI-compatible API), Pydantic validation, confidence scoring and human review.**
 
 [![CI](https://github.com/MohamedAkramOkasha/Intelligent-Document-Processing-System/actions/workflows/ci.yml/badge.svg)](https://github.com/MohamedAkramOkasha/Intelligent-Document-Processing-System/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?logo=python&logoColor=white)
@@ -41,20 +41,20 @@ Accounts-payable clerks, operations teams and legal assistants spend hours copyi
 1. **Ingest** PDFs (digital or scanned), images, DOCX and text files, one at a time or in batches.
 2. **Parse**: use the PDF text layer when it exists, and run Tesseract OCR with image pre-processing when it doesn't.
 3. **Classify** each document as an invoice, receipt, contract or generic document.
-4. **Extract** structured JSON with **Gemini**. The model sees both the OCR text and the original file, and its output must match a strict **Pydantic** schema, with one automatic self-repair round if it doesn't.
+4. **Extract** structured JSON with the **LLM** (Gemini, Groq or any OpenAI-compatible API, with an optional fallback provider). The model sees both the OCR text and the original file, and its output must match a strict **Pydantic** schema, with one automatic self-repair round if it doesn't.
 5. **Validate** the data with business rules (totals reconcile, dates are consistent, required fields are present, and so on).
 6. **Score** confidence for every field and for the whole document, using several independent signals.
 7. **Route**: confident documents are auto-approved. Uncertain ones go to a **human-in-the-loop review queue**, where a reviewer sees the original page next to editable, colour-coded fields. Every change is recorded in an audit trail.
 8. **Export** approved data to **Excel**, **CSV** or **JSON**.
 
-The system still runs **without an API key**. A rule-based extractor takes over (it is also the automatic fallback when Gemini fails), so you can run the demo, the tests and CI offline.
+The system still runs **without an API key**. A rule-based extractor takes over (it is also the automatic fallback when the LLM fails), so you can run the demo, the tests and CI offline.
 
 ## Features
 
 | Area | What you get |
 |---|---|
 | **Document parsing** | PDF text layer via `pypdfium2`, per-page scan detection, Tesseract OCR with grayscale/upscale/denoise/auto-rotate, multi-frame TIFF, DOCX paragraphs + tables, page previews for review |
-| **LLM extraction** | Gemini (`google-genai`) in JSON mode, multimodal (PDF/image attached), schema-driven prompts, per-field confidence + verbatim evidence, self-repair on schema errors, retries with exponential backoff |
+| **LLM extraction** | Gemini (`google-genai`), Groq or any OpenAI-compatible API in JSON mode, optional fallback provider (`LLM_FALLBACK_PROVIDER`), multimodal (PDF/image attached), schema-driven prompts, per-field confidence + verbatim evidence, self-repair on schema errors, retries with exponential backoff |
 | **Schemas** | Pydantic v2 models for `Invoice`, `Receipt`, `Contract`, `Generic`; tolerant coercion (`"$1,234.56"` → `1234.56`, `"March 3rd, 2026"` → `2026-03-03`, `"usd"` → `USD`); invalid values are nulled and flagged instead of failing the document |
 | **Validation** | Line-item maths, subtotal/tax/total reconciliation, tax-rate maths, due date ≥ issue date, contract expiry > effective date, party count, ISO currency, e-mail format, future/implausible dates |
 | **Confidence scoring** | LLM self-assessment, evidence grounding (catches hallucinations) and OCR word confidence, with validation penalties; document score weighted by required fields |
@@ -79,7 +79,7 @@ flowchart LR
 
     subgraph Pipeline[Processing pipeline]
         P[Parser<br/>PDF text / OCR / DOCX] --> C[Classifier]
-        C --> X[Extractor<br/>Gemini ⟶ fallback: rules]
+        C --> X[Extractor<br/>LLM ⟶ fallback: rules]
         X --> V[Pydantic coercion<br/>+ business rules]
         V --> S[Confidence scoring]
         S --> D{needs review?}
@@ -93,7 +93,7 @@ flowchart LR
     Q -- reviewer corrects --> AP[(approved)]
     R <--> DB[(SQLite / any SQL DB<br/>documents · batches · audit log)]
     R --> F[(File store<br/>uploads · page previews)]
-    G[[Google Gemini API]] <-.-> X
+    G[[LLM API<br/>Gemini · Groq · OpenAI-compatible]] <-.-> X
 ```
 
 ### Document lifecycle
@@ -328,9 +328,9 @@ Exports include only `approved` and `auto_approved` documents unless you pass `s
 │   ├── processing/
 │   │   ├── parsers.py       # PDF / image / DOCX / text → pages + previews
 │   │   ├── ocr.py           # Tesseract wrapper, pre-processing, word confidences
-│   │   ├── llm.py           # Gemini client (JSON mode, multimodal, retries)
+│   │   ├── llm.py           # Gemini, OpenAI-compatible and Fallback clients (JSON mode, multimodal, retries)
 │   │   ├── prompts.py       # classification / extraction / repair prompts
-│   │   ├── extractors.py    # GeminiExtractor, HeuristicExtractor
+│   │   ├── extractors.py    # LLMExtractor, HeuristicExtractor
 │   │   ├── heuristics.py    # rule-based classifier + extractors (offline / fallback)
 │   │   ├── validation.py    # Pydantic coercion + business rules
 │   │   ├── confidence.py    # multi-signal confidence scoring + review routing
@@ -341,7 +341,7 @@ Exports include only `approved` and `auto_approved` documents unless you pass `s
 │   ├── config.py            # pydantic-settings configuration
 │   └── utils.py             # number/date parsing, nested-path helpers
 ├── ui/                      # Streamlit app (dashboard, upload, review, documents, batches, export)
-├── tests/                   # pytest suite (fake Gemini client, no network)
+├── tests/                   # pytest suite (fake LLM client, no network)
 ├── scripts/                 # sample generator, smoke test
 ├── docs/architecture.md
 ├── Dockerfile · docker-compose.yml · Makefile · pyproject.toml
@@ -356,7 +356,7 @@ pytest --cov=app          # with coverage
 ruff check app ui tests scripts
 ```
 
-The LLM paths are tested with a **fake Gemini client** (`tests/conftest.py`). The tests cover confident auto-approval, hallucinated totals being caught, the schema self-repair round, and falling back to the rule-based extractor when the API fails. None of them make network calls.
+The LLM paths are tested with a **fake LLM client** (`tests/conftest.py`). The tests cover confident auto-approval, hallucinated totals being caught, the schema self-repair round, and falling back to the rule-based extractor when the API fails. None of them make network calls.
 
 ## Extending
 

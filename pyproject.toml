@@ -1,7 +1,7 @@
 [project]
 name = "intelligent-document-processing"
 version = "1.0.0"
-description = "End-to-end Intelligent Document Processing: OCR + Gemini extraction, validation, confidence scoring, human review, batch processing and CSV/Excel export."
+description = "End-to-end Intelligent Document Processing: OCR + LLM extraction (Gemini, Groq or any OpenAI-compatible API), validation, confidence scoring, human review, batch processing and CSV/Excel export."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -23,4 +23,3 @@ ignore = ["B008", "UP007", "UP042", "SIM102", "SIM108", "B905", "E501"]
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/processing/llm.py"]

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import read_upload
 from app.schemas.api import BatchOut
 from app.schemas.documents import DocumentType
 from app.services import documents as doc_svc
@@ -27,7 +28,7 @@ def create(
     doc_ids: list[str] = []
     for f in files:
         try:
-            doc = doc_svc.create_document(db, f.file.read(), f.filename or "document", f.content_type,
+            doc = doc_svc.create_document(db, read_upload(f), f.filename or "document", f.content_type,
                                           batch_id=batch.id, requested_type=document_type)
             doc_ids.append(doc.id)
         except doc_svc.UploadError as exc:

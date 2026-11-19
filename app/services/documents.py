@@ -110,7 +110,8 @@ def process_document(doc_id: str) -> None:
     result = output.result
     with session_scope() as db:
         doc = db.get(Document, doc_id)
-        if doc is None:
+        if doc is None:  # deleted while the pipeline ran
+            shutil.rmtree(preview_dir, ignore_errors=True)
             return
         doc.document_type = result.document_type.value
         doc.extractor = result.extractor

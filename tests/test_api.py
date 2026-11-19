@@ -3,9 +3,14 @@ import time
 
 import pandas as pd
 import pytest
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
+from app.api.deps import read_upload
 from app.api.main import app
+from app.config import get_settings
+from app.storage.database import session_scope
+from app.storage.models import Document
 
 
 @pytest.fixture(scope="module")
@@ -111,3 +116,49 @@ def test_stats_and_404(client):
     assert client.get("/api/v1/documents/doesnotexist").status_code == 404
     listing = client.get("/api/v1/documents", params={"document_type": "invoice"}).json()
     assert listing["total"] >= 1
+
+
+def test_read_upload_stops_past_limit(monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_upload_mb", 1)
+    limit = 1024 * 1024
+    assert len(read_upload(UploadFile(io.BytesIO(b"x" * (limit * 3))))) == limit + 1
+    assert len(read_upload(UploadFile(io.BytesIO(b"x" * 10)))) == 10
+
+
+def test_upload_rejects_oversized_file(client, monkeypatch, invoice_text):
+    monkeypatch.setattr(get_settings(), "max_upload_mb", 1)
+    big = b"x" * (1024 * 1024 + 1)
+    r = client.post("/api/v1/documents", files={"file": ("big.txt", big, "text/plain")})
+    assert r.status_code == 422
+    assert "exceeds the 1 MB limit" in r.json()["detail"]
+
+    files = [("files", ("big.txt", big, "text/plain")), ("files", ("ok.txt", invoice_text.encode(), "text/plain"))]
+    batch = client.post("/api/v1/batches", files=files).json()
+    assert batch["total"] == 1
+    assert batch["rejected"] == [{"filename": "big.txt", "error": "'big.txt' exceeds the 1 MB limit."}]
+
+
+def test_api_key_required_when_configured(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "api_key", "s3cret")
+    assert client.get("/api/v1/stats").status_code == 401
+    assert client.get("/api/v1/stats", headers={"X-API-Key": "wrong"}).status_code == 401
+    assert client.get("/api/v1/stats", headers={"X-API-Key": ""}).status_code == 401
+    assert client.get("/api/v1/stats", headers={"X-API-Key": "s3cret"}).status_code == 200
+    assert client.get("/health").status_code == 200  # public
+
+
+@pytest.mark.parametrize("busy_status", ["queued", "processing"])
+def test_reprocess_conflicts_while_busy(client, invoice_text, busy_status):
+    doc_id = _upload(client, invoice_text).json()["id"]
+    with session_scope() as db:
+        db.get(Document, doc_id).status = busy_status
+    r = client.post(f"/api/v1/documents/{doc_id}/reprocess")
+    assert r.status_code == 409
+    assert client.get(f"/api/v1/documents/{doc_id}").json()["status"] == busy_status
+
+
+def test_reprocess_finished_document(client, invoice_text):
+    doc_id = _upload(client, invoice_text).json()["id"]
+    r = client.post(f"/api/v1/documents/{doc_id}/reprocess")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "needs_review"

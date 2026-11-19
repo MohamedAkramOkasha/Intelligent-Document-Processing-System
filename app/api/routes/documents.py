@@ -7,12 +7,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_document
+from app.api.deps import get_document, read_upload
 from app.schemas.api import DocumentDetail, DocumentList, DocumentSummary
 from app.schemas.documents import DocumentType
 from app.services import documents as svc
 from app.storage.database import get_db
-from app.storage.models import Document
+from app.storage.models import Document, DocumentStatus
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -33,7 +33,7 @@ def upload_document(
     db: Session = Depends(get_db),
 ) -> DocumentDetail:
     try:
-        doc = svc.create_document(db, file.file.read(), file.filename or "document", file.content_type,
+        doc = svc.create_document(db, read_upload(file), file.filename or "document", file.content_type,
                                   requested_type=document_type)
     except svc.UploadError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -100,6 +100,8 @@ def reprocess_document(
     db: Session = Depends(get_db),
 ) -> DocumentDetail:
     doc = db.merge(doc)
+    if doc.status in (DocumentStatus.QUEUED.value, DocumentStatus.PROCESSING.value):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Document is already {doc.status}")
     svc.reprocess(db, doc, document_type, reviewer)
     if wait:
         svc.process_document(doc.id)

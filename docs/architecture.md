@@ -4,7 +4,7 @@
 
 1. **Correct over fast.** A wrong number in an ERP costs more than a minute of a reviewer's time. The system is built to *know when it doesn't know*.
 2. **Never fail a whole document over one bad value.** An unparseable date is set to null and flagged. It doesn't throw away twenty good fields.
-3. **Degrade gracefully.** If there is no API key, the Gemini quota runs out, Tesseract is missing or a PDF is scanned, there is always a fallback path, and the reason is recorded in `warnings` and `review_reasons`.
+3. **Degrade gracefully.** If there is no API key, the LLM provider's quota runs out (and no fallback provider is left), Tesseract is missing or a PDF is scanned, there is always a fallback path, and the reason is recorded in `warnings` and `review_reasons`.
 4. **Auditable.** The original extraction, the human correction and who changed what are all kept.
 
 ## Components
@@ -27,10 +27,10 @@ bytes ─► parse_document ─► ParsedDocument(pages, ocr_words, preview_imag
             │  Image: EXIF-transpose → grayscale → upscale → autocontrast → median → sharpen → OSD rotate → OCR
             │  DOCX: paragraphs + tables (merged cells de-duplicated)
             ▼
-       classify ─► (DocumentType, confidence)          Gemini, or keyword scoring as fallback
+       classify ─► (DocumentType, confidence)          LLM, or keyword scoring as fallback
             ▼
         extract ─► RawExtraction(data, field_confidence, evidence)
-            │  Gemini JSON mode, prompt = JSON Schema of the Pydantic model + rubric + text (+ file)
+            │  LLM JSON mode (Gemini, Groq or any OpenAI-compatible API), prompt = JSON Schema of the Pydantic model + rubric + text (+ file)
             │  if data fails schema validation → one repair round with the error list
             │  any exception → HeuristicExtractor
             ▼
